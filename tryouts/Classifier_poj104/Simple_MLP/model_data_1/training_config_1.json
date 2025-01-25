@@ -1,0 +1,1 @@
+{"data_dir": "processed_data/", "batch_size": 32, "learning_rate": 0.0001, "epochs": 50, "log_file": "model_data_1/training_log_1.txt", "model_{MODEL}_dir": "model_data_1/", "early_stopping_patience": 5, "model_architecture_file": "model_data_1/model_architecture_1.json"}

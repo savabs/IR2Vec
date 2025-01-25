@@ -1,0 +1,21 @@
+{
+    "data_dir": "processed_data/",
+    "batch_size": 32,
+    "learning_rate": 0.0005,
+    "epochs": 20,
+    "log_file": "model_data_2/training_log_2.txt",
+    "model_{MODEL}_dir": "model_data_2/",
+    "early_stopping_patience": 5,
+    "model_architecture_file": "model_data_2/model_architecture_2.json"
+}
+{
+    "data_dir": "processed_data/",
+    "batch_size": 32,
+    "learning_rate": 1e-05,
+    "epochs": 20,
+    "log_file": "model_data_2/training_log_2.txt",
+    "model_{MODEL}_dir": "model_data_2/",
+    "early_stopping_patience": 5,
+    "model_architecture_file": "model_data_2/model_architecture_2.json"
+}
+{"data_dir": "processed_data/", "batch_size": 64, "learning_rate": 1e-05, "epochs": 20, "log_file": "model_data_2/training_log_2.txt", "model_dir": "model_data_2/", "early_stopping_patience": 5, "model_architecture_file": "model_data_2/model_architecture_2.json"}
