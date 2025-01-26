@@ -45,4 +45,4 @@ def inspect_pt_files(directory):
                 print(f"Error processing {filename}: {e}\n")
 
 # Example usage
-inspect_pt_files('/home/es21btech11028/IR2Vec/tryouts/Data_things/processed_data')
+inspect_pt_files('/home/es21btech11028/IR2Vec/tryouts/Data_things/train_val_test_instrcution')

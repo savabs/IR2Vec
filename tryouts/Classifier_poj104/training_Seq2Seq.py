@@ -13,9 +13,8 @@ from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from sklearn.metrics import accuracy_score
 from tqdm import tqdm
-from torch.autograd import Variable
 import torch.fx
-
+torch._dynamo.config.verbose = True
 
 @dataclass
 class ModelArgs:
@@ -130,21 +129,18 @@ class Attention(nn.Module):
         self.cache_k = self.cache_k.to(xq)
         self.cache_v = self.cache_v.to(xq)
 
-        self.cache_k[:bsz, start_pos : start_pos + seqlen] = xk
-        self.cache_v[:bsz, start_pos : start_pos + seqlen] = xv
+        self.cache_k[:bsz, start_pos : start_pos + seqlen] = xk.detach()
+        self.cache_v[:bsz, start_pos : start_pos + seqlen] = xv.detach()
 
-        keys = self.cache_k[:bsz, : start_pos + seqlen]
-        values = self.cache_v[:bsz, : start_pos + seqlen]
-
-        keys = repeat_kv(keys, self.n_rep)
-        values = repeat_kv(values, self.n_rep)
+        keys = repeat_kv(self.cache_k[:bsz, : start_pos + seqlen], self.n_rep).detach()
+        values = repeat_kv(self.cache_v[:bsz, : start_pos + seqlen], self.n_rep).detach()
 
         xq = xq.transpose(1, 2)
         keys = keys.transpose(1, 2)
         values = values.transpose(1, 2)
         scores = torch.matmul(xq, keys.transpose(2, 3)) / math.sqrt(self.head_dim)
         if mask is not None:
-            scores = scores + mask
+            scores = scores + mask.detach()
         scores = F.softmax(scores.float(), dim=-1).type_as(xq)
         output = torch.matmul(scores, values)
         output = output.transpose(1, 2).contiguous().view(bsz, seqlen, -1)
@@ -200,7 +196,7 @@ class TransformerBlock(nn.Module):
         )
         out = h + self.feed_forward(self.ffn_norm(h))
         return out
-
+    
 class Transformer(nn.Module):
     def __init__(self, params: ModelArgs, num_classes: int):
         super().__init__()
@@ -223,14 +219,13 @@ class Transformer(nn.Module):
         )
 
     # @torch.inference_mode()
-    def forward(self, tokens: torch.Tensor, lengths: torch.Tensor, start_pos: int):
+    def forward(self, tokens: torch.Tensor, lengths: torch.Tensor, masks: torch.Tensor, start_pos: int):
         _bsz, seqlen , embedding = tokens.shape
         h = self.tok_embeddings(tokens)
         self.freqs_cis = self.freqs_cis.to(h.device)
-        freqs_cis = self.freqs_cis[start_pos : start_pos + seqlen]
+        freqs_cis = self.freqs_cis[start_pos : start_pos + seqlen].detach()
 
-        mask = torch.arange(seqlen, device=tokens.device, dtype=torch.float32)[None, :] >= lengths[:, None]
-        mask = mask[:, None, None, :].float() * float('-inf')
+        mask = masks[:, None, None, :].float() * float('-inf')
 
         for layer in self.layers:
             h = layer(h, start_pos, freqs_cis, mask)
@@ -241,21 +236,22 @@ class Transformer(nn.Module):
 
 # Custom Dataset class that loads data in batches
 class CustomDataset(Dataset):
-    def __init__(self, X_path, y_path):
-        self.X_path = X_path
-        self.y_path = y_path
-        self.X_data = np.load(X_path, allow_pickle=True)
-        self.y_data = np.load(y_path).astype(np.float32)
+    def __init__(self, data_path):
+        self.data = torch.load(data_path)
+        self.X_data = self.data['data'].float()
+        self.y_data = self.data['labels'].float()
+        self.masks = self.data['masks'].float()
         self.lengths = [len(seq) for seq in self.X_data]
 
     def __len__(self):
         return len(self.y_data)
 
     def __getitem__(self, idx):
-        sequence = torch.tensor(self.X_data[idx], dtype=torch.float32)
+        sequence = self.X_data[idx]
         length = torch.tensor(self.lengths[idx], dtype=torch.long)
-        label = torch.tensor(self.y_data[idx], dtype=torch.float32)
-        return sequence, length, label
+        label = self.y_data[idx]
+        mask = self.masks[idx]
+        return sequence, length, label, mask
 
 
 # Corrected collate_fn
@@ -263,16 +259,17 @@ def collate_fn(batch):
     sequences = [item[0] for item in batch]  # Extract sequences
     lengths = [item[1] for item in batch]    # Extract lengths
     labels = [item[2] for item in batch]     # Extract labels
+    masks = [item[3] for item in batch]      # Extract masks
 
     # Pad sequences to the maximum length in the batch
     padded_sequences = pad_sequence(sequences, batch_first=True, padding_value=0)
+    padded_masks = pad_sequence(masks, batch_first=True, padding_value=0)
 
     # Convert lengths and labels into tensors
     lengths = torch.tensor(lengths, dtype=torch.long)
     labels = torch.stack(labels)  # Stack one-hot encoded labels into a single tensor
-    # labels = labels.index(max(labels))
 
-    return padded_sequences, lengths, labels
+    return padded_sequences, lengths, labels, padded_masks
 
 if __name__ == "__main__":
 
@@ -295,8 +292,8 @@ if __name__ == "__main__":
     start_pos = 0
 
     # Create dataset and dataloader
-    train_dataset = CustomDataset('/home/es21btech11028/IR2Vec/tryouts/Data_things/processed_data_instructions/X_train.npy', '/home/es21btech11028/IR2Vec/tryouts/Data_things/processed_data_instructions/y_train.npy')
-    val_dataset = CustomDataset('/home/es21btech11028/IR2Vec/tryouts/Data_things/processed_data_instructions/X_val.npy', '/home/es21btech11028/IR2Vec/tryouts/Data_things/processed_data_instructions/y_val.npy')
+    train_dataset = CustomDataset('/home/es21btech11028/IR2Vec/tryouts/Data_things/train_val_test_instrcution/train_data.pt')
+    val_dataset = CustomDataset('/home/es21btech11028/IR2Vec/tryouts/Data_things/train_val_test_instrcution/val_data.pt')
     
     train_dataloader = DataLoader(
         train_dataset,
@@ -319,97 +316,24 @@ if __name__ == "__main__":
 
     # Training loop
     num_epochs = 10
-    model.train()
+    # model.train()
     for epoch in range(num_epochs):
         total_loss = 0.0
         model.train()
         progress_bar = tqdm(train_dataloader, desc=f"Epoch {epoch+1}/{num_epochs}", unit="batch")
-        for tokens, lengths, labels in progress_bar:
+        for tokens, lengths, labels, masks in progress_bar:
             # Move to device
-            tokens, lengths, labels = tokens.to(device), lengths.to(device), labels.to(device)
+            optimizer.zero_grad()
+            tokens, lengths, labels, masks = tokens.to(device), lengths.to(device), labels.to(device), masks.to(device)
 
             # Forward pass
-            outputs = model(tokens, lengths, start_pos)
+            outputs = model(tokens, lengths, masks, start_pos)
             # print(outputs.dtype)
             # Compute loss
-            loss = criterion(outputs, torch.argmax(labels, dim=1))
+            loss = criterion(outputs,labels)
             # print(loss.dtype)
             # Backward pass and optimizationimport os
-import numpy as np
-from sklearn.model_selection import train_test_split
-from keras.preprocessing.sequence import pad_sequences
-from concurrent.futures import ThreadPoolExecutor
-
-# Set the dataset path
-data_dir = 'instruction_embeddings/'
-
-# Initialize lists for data and labels
-data = []
-labels = []
-class_names = []
-
-def load_class_data(class_index, class_name):
-    """Load .npy files from a class directory."""
-    class_path = os.path.join(data_dir, class_name)
-    class_data = []
-    class_labels = []
-    if os.path.isdir(class_path):
-        for file_name in os.listdir(class_path):
-            file_path = os.path.join(class_path, file_name)
-            if file_name.endswith('.npy'):
-                file_data = np.load(file_path)
-                class_data.append(file_data)
-                class_labels.append(class_index)
-    return class_data, class_labels
-
-# Use ThreadPoolExecutor for parallel file loading
-with ThreadPoolExecutor() as executor:
-    futures = []
-    for class_index, class_name in enumerate(sorted(os.listdir(data_dir))):
-        class_names.append(class_name)
-        futures.append(executor.submit(load_class_data, class_index, class_name))
-    
-    for future in futures:
-        class_data, class_labels = future.result()
-        data.extend(class_data)
-        labels.extend(class_labels)
-
-# Find the maximum sequence length
-max_seq_len = max(len(seq) for seq in data)
-
-# Pad sequences to ensure uniform length
-data_padded = pad_sequences(data, maxlen=max_seq_len, dtype='float32', padding='post', truncating='post')
-
-# Create an attention mask (vectorized for speed)
-attention_masks = np.array([[1] * len(seq) + [0] * (max_seq_len - len(seq)) for seq in data], dtype='int32')
-
-# Convert labels to one-hot encoding
-num_classes = len(class_names)
-labels = np.array(labels)
-labels_one_hot = np.eye(num_classes)[labels]  # One-hot encoding
-
-# Split the dataset into training, validation, and test sets
-X_train, X_temp, y_train, y_temp, mask_train, mask_temp = train_test_split(
-    data_padded, labels_one_hot, attention_masks, test_size=0.2, random_state=42
-)
-X_val, X_test, y_val, y_test, mask_val, mask_test = train_test_split(
-    X_temp, y_temp, mask_temp, test_size=0.5, random_state=42
-)
-
-# Save processed datasets
-os.makedirs('processed_data', exist_ok=True)
-
-# Save data in batches to reduce memory overhead
-np.savez_compressed('processed_data/training_data.npz', 
-                    X_train=X_train, y_train=y_train, mask_train=mask_train)
-np.savez_compressed('processed_data/validation_data.npz', 
-                    X_val=X_val, y_val=y_val, mask_val=mask_val)
-np.savez_compressed('processed_data/test_data.npz', 
-                    X_test=X_test, y_test=y_test, mask_test=mask_test)
-
-print("Processing complete. Data, attention masks, and one-hot encoded labels saved in 'processed_data' folder.")
-
-            optimizer.zero_grad()
+            
             loss.backward()
             optimizer.step()
 
@@ -425,9 +349,9 @@ print("Processing complete. Data, attention masks, and one-hot encoded labels sa
         all_preds = []
         all_labels = []
         with torch.no_grad():
-            for tokens, lengths, labels in val_dataloader:
-                tokens, lengths, labels = tokens.to(device), lengths.to(device), labels.to(device)
-                outputs = model(tokens, lengths, start_pos)
+            for tokens, lengths, labels, masks in val_dataloader:
+                tokens, lengths, labels, masks = tokens.to(device), lengths.to(device), labels.to(device), masks.to(device)
+                outputs = model(tokens, lengths, masks, start_pos)
                 loss = criterion(outputs, torch.argmax(labels, dim=1))
                 val_loss += loss.item()
 
@@ -445,20 +369,3 @@ print("Processing complete. Data, attention masks, and one-hot encoded labels sa
 
     # Save the trained model
     torch.save(model.state_dict(), 'transformer_model.pth')
-
-# if __name__ == "__main__" : 
-#     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-#     args = ModelArgs(
-#         dim=512,
-#         n_layers=6,
-#         n_heads=8,
-#         vocab_size=300,
-#         max_batch_size=32,
-#         max_seq_len=512,
-#     )
-
-#     num_classes = 104
-#     model = Transformer(args, num_classes).to(device)
-#     graph = torch.fx.symbolic_trace(model)
-
-#     print(graph)
