@@ -15,3 +15,4 @@ tryouts/Data_things/data/*
 tryouts/Data_things/processed_data/*
 tryouts/Data_things/processed_instruction_embeddings/*
 tryouts/Data_things/program_embeddings/*
+tryouts/Data_things/train_val_test_instrcution/*
