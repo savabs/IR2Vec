@@ -274,105 +274,12 @@ def collate_fn(batch):
 
     return padded_sequences, lengths, labels
 
-# if __name__ == "__main__":
+if __name__ == "__main__":
 
-#     # Setup logging
-#     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-#     logger = logging.getLogger(__name__)
+    # Setup logging
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+    logger = logging.getLogger(__name__)
 
-#     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-#     args = ModelArgs(
-#         dim=512,
-#         n_layers=6,
-#         n_heads=8,
-#         vocab_size=300,
-#         max_batch_size=32,
-#         max_seq_len=512,
-#     )
-
-#     num_classes = 104
-#     model = Transformer(args, num_classes).to(device)
-#     start_pos = 0
-
-#     # Create dataset and dataloader
-#     train_dataset = CustomDataset('/home/es21btech11028/IR2Vec/tryouts/Data_things/processed_data_instructions/X_train.npy', '/home/es21btech11028/IR2Vec/tryouts/Data_things/processed_data_instructions/y_train.npy')
-#     val_dataset = CustomDataset('/home/es21btech11028/IR2Vec/tryouts/Data_things/processed_data_instructions/X_val.npy', '/home/es21btech11028/IR2Vec/tryouts/Data_things/processed_data_instructions/y_val.npy')
-    
-#     train_dataloader = DataLoader(
-#         train_dataset,
-#         batch_size=args.max_batch_size,
-#         shuffle=True,
-#         collate_fn=collate_fn
-#     )
-    
-#     val_dataloader = DataLoader(
-#         val_dataset,
-#         batch_size=args.max_batch_size,
-#         shuffle=False,
-#         collate_fn=collate_fn
-#     )
-
-#     # Define loss function and optimizer
-#     criterion = nn.CrossEntropyLoss()
-#     optimizer = AdamW(model.parameters(), lr=1e-4)
-#     scheduler = CosineAnnealingLR(optimizer, T_max=10)
-
-#     # Training loop
-#     num_epochs = 10
-#     model.train()
-#     for epoch in range(num_epochs):
-#         total_loss = 0.0
-#         model.train()
-#         progress_bar = tqdm(train_dataloader, desc=f"Epoch {epoch+1}/{num_epochs}", unit="batch")
-#         for tokens, lengths, labels in progress_bar:
-#             # Move to device
-#             tokens, lengths, labels = tokens.to(device), lengths.to(device), labels.to(device)
-
-#             # Forward pass
-#             outputs = model(tokens, lengths, start_pos)
-#             print(outputs.dtype)
-#             # Compute loss
-#             loss = criterion(outputs, torch.argmax(labels, dim=1))
-#             print(loss.dtype)
-#             # Backward pass and optimization
-#             optimizer.zero_grad()
-#             loss.backward()
-#             optimizer.step()
-
-#             total_loss += loss.item()
-#             progress_bar.set_postfix(loss=loss.item())
-
-#         avg_loss = total_loss / len(train_dataloader)
-#         logger.info(f"Epoch [{epoch+1}/{num_epochs}], Training Loss: {avg_loss:.4f}")
-
-#         # Validation
-#         model.eval()
-#         val_loss = 0.0
-#         all_preds = []
-#         all_labels = []
-#         with torch.no_grad():
-#             for tokens, lengths, labels in val_dataloader:
-#                 tokens, lengths, labels = tokens.to(device), lengths.to(device), labels.to(device)
-#                 outputs = model(tokens, lengths, start_pos)
-#                 loss = criterion(outputs, torch.argmax(labels, dim=1))
-#                 val_loss += loss.item()
-
-#                 preds = torch.argmax(outputs, dim=1)
-#                 true_labels = torch.argmax(labels, dim=1)
-#                 all_preds.extend(preds.cpu().numpy())
-#                 all_labels.extend(true_labels.cpu().numpy())
-
-#         avg_val_loss = val_loss / len(val_dataloader)
-#         val_accuracy = accuracy_score(all_labels, all_preds, normalize=True)
-#         logger.info(f"Epoch [{epoch+1}/{num_epochs}], Validation Loss: {avg_val_loss:.4f}, Validation Accuracy: {val_accuracy:.4f}")
-
-#         # Step the scheduler
-#         scheduler.step()
-
-#     # Save the trained model
-#     torch.save(model.state_dict(), 'transformer_model.pth')
-
-if __name__ == "__main__" : 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     args = ModelArgs(
         dim=512,
@@ -385,6 +292,173 @@ if __name__ == "__main__" :
 
     num_classes = 104
     model = Transformer(args, num_classes).to(device)
-    graph = torch.fx.symbolic_trace(model)
+    start_pos = 0
 
-    print(graph)
+    # Create dataset and dataloader
+    train_dataset = CustomDataset('/home/es21btech11028/IR2Vec/tryouts/Data_things/processed_data_instructions/X_train.npy', '/home/es21btech11028/IR2Vec/tryouts/Data_things/processed_data_instructions/y_train.npy')
+    val_dataset = CustomDataset('/home/es21btech11028/IR2Vec/tryouts/Data_things/processed_data_instructions/X_val.npy', '/home/es21btech11028/IR2Vec/tryouts/Data_things/processed_data_instructions/y_val.npy')
+    
+    train_dataloader = DataLoader(
+        train_dataset,
+        batch_size=args.max_batch_size,
+        shuffle=True,
+        collate_fn=collate_fn
+    )
+    
+    val_dataloader = DataLoader(
+        val_dataset,
+        batch_size=args.max_batch_size,
+        shuffle=False,
+        collate_fn=collate_fn
+    )
+
+    # Define loss function and optimizer
+    criterion = nn.CrossEntropyLoss()
+    optimizer = AdamW(model.parameters(), lr=1e-4)
+    scheduler = CosineAnnealingLR(optimizer, T_max=10)
+
+    # Training loop
+    num_epochs = 10
+    model.train()
+    for epoch in range(num_epochs):
+        total_loss = 0.0
+        model.train()
+        progress_bar = tqdm(train_dataloader, desc=f"Epoch {epoch+1}/{num_epochs}", unit="batch")
+        for tokens, lengths, labels in progress_bar:
+            # Move to device
+            tokens, lengths, labels = tokens.to(device), lengths.to(device), labels.to(device)
+
+            # Forward pass
+            outputs = model(tokens, lengths, start_pos)
+            # print(outputs.dtype)
+            # Compute loss
+            loss = criterion(outputs, torch.argmax(labels, dim=1))
+            # print(loss.dtype)
+            # Backward pass and optimizationimport os
+import numpy as np
+from sklearn.model_selection import train_test_split
+from keras.preprocessing.sequence import pad_sequences
+from concurrent.futures import ThreadPoolExecutor
+
+# Set the dataset path
+data_dir = 'instruction_embeddings/'
+
+# Initialize lists for data and labels
+data = []
+labels = []
+class_names = []
+
+def load_class_data(class_index, class_name):
+    """Load .npy files from a class directory."""
+    class_path = os.path.join(data_dir, class_name)
+    class_data = []
+    class_labels = []
+    if os.path.isdir(class_path):
+        for file_name in os.listdir(class_path):
+            file_path = os.path.join(class_path, file_name)
+            if file_name.endswith('.npy'):
+                file_data = np.load(file_path)
+                class_data.append(file_data)
+                class_labels.append(class_index)
+    return class_data, class_labels
+
+# Use ThreadPoolExecutor for parallel file loading
+with ThreadPoolExecutor() as executor:
+    futures = []
+    for class_index, class_name in enumerate(sorted(os.listdir(data_dir))):
+        class_names.append(class_name)
+        futures.append(executor.submit(load_class_data, class_index, class_name))
+    
+    for future in futures:
+        class_data, class_labels = future.result()
+        data.extend(class_data)
+        labels.extend(class_labels)
+
+# Find the maximum sequence length
+max_seq_len = max(len(seq) for seq in data)
+
+# Pad sequences to ensure uniform length
+data_padded = pad_sequences(data, maxlen=max_seq_len, dtype='float32', padding='post', truncating='post')
+
+# Create an attention mask (vectorized for speed)
+attention_masks = np.array([[1] * len(seq) + [0] * (max_seq_len - len(seq)) for seq in data], dtype='int32')
+
+# Convert labels to one-hot encoding
+num_classes = len(class_names)
+labels = np.array(labels)
+labels_one_hot = np.eye(num_classes)[labels]  # One-hot encoding
+
+# Split the dataset into training, validation, and test sets
+X_train, X_temp, y_train, y_temp, mask_train, mask_temp = train_test_split(
+    data_padded, labels_one_hot, attention_masks, test_size=0.2, random_state=42
+)
+X_val, X_test, y_val, y_test, mask_val, mask_test = train_test_split(
+    X_temp, y_temp, mask_temp, test_size=0.5, random_state=42
+)
+
+# Save processed datasets
+os.makedirs('processed_data', exist_ok=True)
+
+# Save data in batches to reduce memory overhead
+np.savez_compressed('processed_data/training_data.npz', 
+                    X_train=X_train, y_train=y_train, mask_train=mask_train)
+np.savez_compressed('processed_data/validation_data.npz', 
+                    X_val=X_val, y_val=y_val, mask_val=mask_val)
+np.savez_compressed('processed_data/test_data.npz', 
+                    X_test=X_test, y_test=y_test, mask_test=mask_test)
+
+print("Processing complete. Data, attention masks, and one-hot encoded labels saved in 'processed_data' folder.")
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            total_loss += loss.item()
+            progress_bar.set_postfix(loss=loss.item())
+
+        avg_loss = total_loss / len(train_dataloader)
+        logger.info(f"Epoch [{epoch+1}/{num_epochs}], Training Loss: {avg_loss:.4f}")
+
+        # Validation
+        model.eval()
+        val_loss = 0.0
+        all_preds = []
+        all_labels = []
+        with torch.no_grad():
+            for tokens, lengths, labels in val_dataloader:
+                tokens, lengths, labels = tokens.to(device), lengths.to(device), labels.to(device)
+                outputs = model(tokens, lengths, start_pos)
+                loss = criterion(outputs, torch.argmax(labels, dim=1))
+                val_loss += loss.item()
+
+                preds = torch.argmax(outputs, dim=1)
+                true_labels = torch.argmax(labels, dim=1)
+                all_preds.extend(preds.cpu().numpy())
+                all_labels.extend(true_labels.cpu().numpy())
+
+        avg_val_loss = val_loss / len(val_dataloader)
+        val_accuracy = accuracy_score(all_labels, all_preds, normalize=True)
+        logger.info(f"Epoch [{epoch+1}/{num_epochs}], Validation Loss: {avg_val_loss:.4f}, Validation Accuracy: {val_accuracy:.4f}")
+
+        # Step the scheduler
+        scheduler.step()
+
+    # Save the trained model
+    torch.save(model.state_dict(), 'transformer_model.pth')
+
+# if __name__ == "__main__" : 
+#     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+#     args = ModelArgs(
+#         dim=512,
+#         n_layers=6,
+#         n_heads=8,
+#         vocab_size=300,
+#         max_batch_size=32,
+#         max_seq_len=512,
+#     )
+
+#     num_classes = 104
+#     model = Transformer(args, num_classes).to(device)
+#     graph = torch.fx.symbolic_trace(model)
+
+#     print(graph)
