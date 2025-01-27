@@ -16,3 +16,8 @@ tryouts/Data_things/processed_data/*
 tryouts/Data_things/processed_instruction_embeddings/*
 tryouts/Data_things/program_embeddings/*
 tryouts/Data_things/train_val_test_instrcution/*
+tryouts/Classifier_poj104/Seq2Seq_transformer/output1.log
+tryouts/Classifier_poj104/Seq2Seq_transformer/output2.log
+tryouts/Classifier_poj104/Seq2Seq_transformer/transformer_model.pth
+tryouts/Classifier_poj104/Seq2Seq_transformer/training_log.pth
+tryouts/Classifier_poj104/Seq2Seq_transformer/best_transformer_model.pth
