@@ -16,6 +16,7 @@ from tqdm import tqdm
 import torch.fx
 from torch import GradScaler
 from torch import autocast
+import os
 torch._dynamo.config.verbose = True
 
 
@@ -32,6 +33,7 @@ class ModelArgs:
 
     max_batch_size: int = 32
     max_seq_len: int = 2048
+    dropout: float = 0.2
 
 
 def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0):
@@ -73,8 +75,8 @@ def apply_rotary_emb(
     freqs_cis = reshape_for_broadcast(freqs_cis, xq_)
     xq_out = torch.view_as_real(xq_ * freqs_cis).flatten(3)
     xk_out = torch.view_as_real(xk_ * freqs_cis).flatten(3)
-    if torch.isnan(xq_out).any() or torch.isnan(xk_out).any():
-        raise ValueError("NaN values found in apply_rotary_emb output")
+    # if torch.isnan(xq_out).any() or torch.isnan(xk_out).any():
+    #     raise ValueError("NaN values found in apply_rotary_emb output")
     return xq_out.type_as(xq), xk_out.type_as(xk)
 
 
@@ -123,6 +125,9 @@ class Attention(nn.Module):
         ).cuda()
 
         self.attention_norm = nn.LayerNorm(args.dim, eps=args.norm_eps)
+        self.dropout = args.dropout
+        self.attn_dropout = nn.Dropout(args.dropout)
+        self.flash = hasattr(torch.nn.functional, "scaled_dot_product_attention")
         self._init_weights()
 
     def _init_weights(self):
@@ -138,33 +143,31 @@ class Attention(nn.Module):
         freqs_cis: torch.Tensor,
         mask: Optional[torch.Tensor],
     ):
-        if torch.isnan(x).any():
-            raise ValueError("NaN values found in the input tensor x")
+        # if torch.isnan(x).any():
+        #     raise ValueError("NaN values found in the input tensor x")
         x = self.attention_norm(x)
 
-        if torch.isnan(x).any(): 
-            raise ValueError("NaN values found in the x ")
+        # if torch.isnan(x).any():
+        #     raise ValueError("NaN values found in the x ")
 
         bsz, seqlen, _ = x.shape
         xq, xk, xv = self.wq(x), self.wk(x), self.wv(x)
 
-        if torch.isnan(xq).any() or torch.isnan(xk).any() or torch.isnan(xv).any():
-            raise ValueError("NaN values found in the xq or xk or xv")
-
+        # if torch.isnan(xq).any() or torch.isnan(xk).any() or torch.isnan(xv).any():
+        #     raise ValueError("NaN values found in the xq or xk or xv")
 
         xq = xq.view(bsz, seqlen, self.n_local_heads, self.head_dim)
         xk = xk.view(bsz, seqlen, self.n_local_kv_heads, self.head_dim)
         xv = xv.view(bsz, seqlen, self.n_local_kv_heads, self.head_dim)
 
-        if torch.isnan(xq).any() or torch.isnan(xk).any() or torch.isnan(xv).any():
-            raise ValueError("NaN values found in the inputs to apply_rotary_emb")
+        # if torch.isnan(xq).any() or torch.isnan(xk).any() or torch.isnan(xv).any():
+        #     raise ValueError("NaN values found in the inputs to apply_rotary_emb")
 
         xq, xk = apply_rotary_emb(xq, xk, freqs_cis=freqs_cis)
 
+        # if torch.isnan(xq).any() or torch.isnan(xk).any() or torch.isnan(xv).any():
+        #     raise ValueError("NaN values found in the xq or xk or xv after the apply the rotary ")
 
-        if torch.isnan(xq).any() or torch.isnan(xk).any() or torch.isnan(xv).any():
-            raise ValueError("NaN values found in the xq or xk or xv after the apply the rotary ")
-        
         self.cache_k = self.cache_k.to(xq)
         self.cache_v = self.cache_v.to(xq)
 
@@ -174,52 +177,61 @@ class Attention(nn.Module):
         keys = repeat_kv(self.cache_k[:bsz, : start_pos + seqlen], self.n_rep)
         values = repeat_kv(self.cache_v[:bsz, : start_pos + seqlen], self.n_rep)
 
-        if torch.isnan(keys).any() or torch.isnan(values).any() : 
-            raise ValueError("Nan values in the keys and the values")
+        # if torch.isnan(keys).any() or torch.isnan(values).any() :
+        #     raise ValueError("Nan values in the keys and the values")
 
         xq = xq.transpose(1, 2)
         keys = keys.transpose(1, 2)
         values = values.transpose(1, 2)
-        scores = torch.matmul(xq, keys.transpose(2, 3)) / math.sqrt(self.head_dim)
-        num_nan_scores = torch.isnan(scores).sum().item()
-        print(num_nan_scores)
-        if torch.isnan(scores).any() :
-            raise ValueError("Nan values in the scores")
-        
-        print(mask.shape)
-        print(scores.shape)
-        
-        if mask is not None:
-            if torch.isnan(mask).any():
-                raise ValueError("NaN values detected in the mask in the slkdf sd")
-            
-            # Unsqueeze and repeat mask to match the shape of scores
-            # Current mask shape: [32, 1, 1, 512]
-            # Target shape: [32, 8, 512, 512]
-            mask = mask.unsqueeze(1).repeat(1, scores.size(1), 1, 1)  # Repeat along head dimension
-            print("Mask after reshaping:", mask.shape)
+        if self.flash:
+            # efficient attention using Flash Attention CUDA kernels
+            output = torch.nn.functional.scaled_dot_product_attention(
+                xq,
+                keys,
+                values,
+                attn_mask=mask,
+                dropout_p=self.dropout if self.training else 0,
+                is_causal=True,
+            )
+        else:
+            scores = torch.matmul(xq, keys.transpose(2, 3)) / math.sqrt(self.head_dim)
+            # num_nan_scores = torch.isnan(scores).sum().item()
+            # print(num_nan_scores)
+            # if torch.isnan(scores).any() :
+            #     raise ValueError("Nan values in the scores")
 
-            # Add the mask
-            scores = scores + mask.detach()
+            # print(mask.shape)
+            # print(scores.shape)
 
-        # if torch.isnan(scores).any() :
-        #     raise ValueError("Nan values in the scores after mask")
+            if mask is not None:
+                # if torch.isnan(mask).any():
+                #     raise ValueError("NaN values detected in the mask in the slkdf sd")
 
+                # Unsqueeze and repeat mask to match the shape of scores
+                # Current mask shape: [32, 1, 1, 512]
+                # Target shape: [32, 8, 512, 512]
+                # mask = mask.unsqueeze(1).repeat(-1, scores.size(1), -1, -1)  # Repeat along head dimension
+                # print("Mask after reshaping:", mask.shape)
 
-        scores = F.softmax(scores.float(), dim=-1).type_as(xq)
-        num_nan_mask = torch.isnan(mask).sum().item()
-        num_nan_scores = torch.isnan(scores).sum().item()
-        print(num_nan_mask , num_nan_scores)
-        if torch.isnan(scores).any() :
-            raise ValueError("Nan values in the scores after mask and softmax")
-        
-        output = torch.matmul(scores, values)
+                # Add the mask
+                scores = scores + mask.detach()
 
-        
+            # if torch.isnan(scores).any() :
+            #     raise ValueError("Nan values in the scores after mask")
+
+            scores = F.softmax(scores.float(), dim=-1).type_as(xq)
+            # num_nan_mask = torch.isnan(mask).sum().item()
+            # num_nan_scores = torch.isnan(scores).sum().item()
+            # print(num_nan_mask , num_nan_scores)
+            # if torch.isnan(scores).any() :
+            #     raise ValueError("Nan values in the scores after mask and softmax")
+            output = self.attn_dropout(scores)
+            output = torch.matmul(output, values)
+
         output = output.transpose(1, 2).contiguous().view(bsz, seqlen, -1)
-        if torch.isnan(output).any() : 
-            raise ValueError("Nan value ecounter in the output")
-        
+        # if torch.isnan(output).any() :
+        #     raise ValueError("Nan value ecounter in the output")
+
         return self.wo(output)
 
 
@@ -249,8 +261,8 @@ class FeedForward(nn.Module):
         nn.init.xavier_uniform_(self.w3.weight)
 
     def forward(self, x):
-        if torch.isnan(x).any():
-            raise ValueError("NaN values found in the input tensor x in the forward of the feedforward")
+        # if torch.isnan(x).any():
+        #     raise ValueError("NaN values found in the input tensor x in the forward of the feedforward")
         x = self.ffn_norm(x)
         return self.w2(F.silu(self.w1(x)) * self.w3(x))
 
@@ -279,11 +291,11 @@ class TransformerBlock(nn.Module):
         freqs_cis: torch.Tensor,
         mask: Optional[torch.Tensor],
     ):
-        if torch.isnan(x).any():
-            raise ValueError("NaN values found in the input tensor x in the trasnformer block")
+        # if torch.isnan(x).any():
+        #     raise ValueError("NaN values found in the input tensor x in the trasnformer block")
         h = x + self.attention(self.attention_norm(x), start_pos, freqs_cis, mask)
-        if torch.isnan(h).any():
-            raise ValueError("NaN values found in the input tensor h in the trasnformer block")
+        # if torch.isnan(h).any():
+        #     raise ValueError("NaN values found in the input tensor h in the trasnformer block")
         out = h + self.feed_forward(self.ffn_norm(h))
         return out
 
@@ -320,8 +332,8 @@ class Transformer(nn.Module):
         masks: torch.Tensor,
         start_pos: int,
     ):
-        if torch.isnan(tokens).any():
-            raise ValueError("NaN values found in the input tensor tokens in the forward of the transformer")
+        # if torch.isnan(tokens).any():
+        #     raise ValueError("NaN values found in the input tensor tokens in the forward of the transformer")
         _bsz, seqlen, embedding = tokens.shape
         h = self.tok_embeddings(tokens)
         self.freqs_cis = self.freqs_cis.to(h.device)
@@ -332,24 +344,28 @@ class Transformer(nn.Module):
         # print(f"Mask unique values: {unique_values}")
         # print(f"Mask counts: {counts}")
         # print(masks.shape)
-        
-        if torch.isnan(masks).any():
-            raise ValueError("NaN values detected in the masks tensor")
+
+        # if torch.isnan(masks).any():
+        #     raise ValueError("NaN values detected in the masks tensor")
 
         masks = (masks > 0).float()
+        masks = torch.nan_to_num(masks, nan=0.0)
 
         # Debug: Check unique values in the mask
         unique_values, counts = torch.unique(masks, return_counts=True)
-        print(f"Mask unique values: {unique_values}, counts: {counts}")
+        # print(f"Mask unique values: {unique_values}, counts: {counts}")
 
         # Expand the mask and apply -inf to masked positions
-        mask = masks[:, None, None, :] * float("-inf")
+        safe_mask = masks.masked_fill(masks == 0, float("-inf"))
 
-        if torch.isnan(mask).any():
-            raise ValueError("NaN values detected in the masks tensor after the inf added")
+        # Expand the mask
+        mask = safe_mask[:, None, None, :]
+
+        # if torch.isnan(mask).any():
+        #     raise ValueError("NaN values detected in the masks tensor after the inf added")
         # print(mask.shape)
 
-        # if 1 == 1 : 
+        # if 1 == 1 :
         #     raise ValueError("Nothing")
         for layer in self.layers:
             h = layer(h, start_pos, freqs_cis, mask)
@@ -413,6 +429,7 @@ if __name__ == "__main__":
         vocab_size=300,
         max_batch_size=32,
         max_seq_len=512,
+        dropout=0.2,
     )
 
     num_classes = 104
@@ -438,7 +455,7 @@ if __name__ == "__main__":
         val_dataset,
         batch_size=args.max_batch_size,
         shuffle=False,
-        collate_fn=collate_fn,
+        collate_fn=collate_fn
     )
 
     # Define loss function and optimizer
@@ -446,22 +463,34 @@ if __name__ == "__main__":
     optimizer = AdamW(model.parameters(), lr=1e-6)
     # scheduler = CosineAnnealingLR(optimizer, T_max=10)
 
+    # Check if a saved model exists and load it
+    best_model_path = "best_transformer_model.pth"
+    start_epoch = 0
+    if torch.cuda.is_available() and torch.cuda.device_count() > 1:
+        model = nn.DataParallel(model)
+    if os.path.exists(best_model_path):
+        logger.info(f"Loading model from {best_model_path}")
+        model.load_state_dict(torch.load(best_model_path))
+        logger.info("Model loaded successfully")
+
     # Training loop
     num_epochs = 10
     model.train()
     scaler = GradScaler()
 
-    for epoch in range(num_epochs):
+    # Initialize lists to store logging information
+    training_losses = []
+    validation_losses = []
+    validation_accuracies = []
+    best_val_loss = float('inf')
+
+    for epoch in range(start_epoch, num_epochs):
         total_loss = 0.0
         model.train()
         progress_bar = tqdm(
             train_dataloader, desc=f"Epoch {epoch+1}/{num_epochs}", unit="batch"
         )
         for tokens, lengths, labels, masks in progress_bar:
-            # Move to device
-            if torch.isnan(tokens).any() or torch.isnan(labels).any() or torch.isnan(masks).any():
-                logger.error("NaN values found in the input data")
-                continue
             optimizer.zero_grad()
             tokens, lengths, labels, masks = (
                 tokens.to(device),
@@ -471,14 +500,14 @@ if __name__ == "__main__":
             )
 
             # Forward pass with autocast
-            with autocast(device_type='cuda'):
+            with autocast(device_type="cuda"):
                 outputs = model(tokens, lengths, masks, start_pos)
                 loss = criterion(outputs, labels)
 
             # Backward pass and optimization
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=2.0)
             scaler.step(optimizer)
             scaler.update()
 
@@ -486,6 +515,7 @@ if __name__ == "__main__":
             progress_bar.set_postfix(loss=loss.item())
 
         avg_loss = total_loss / len(train_dataloader)
+        training_losses.append(avg_loss)
         logger.info(f"Epoch [{epoch+1}/{num_epochs}], Training Loss: {avg_loss:.4f}")
 
         # Validation
@@ -501,7 +531,7 @@ if __name__ == "__main__":
                     labels.to(device),
                     masks.to(device),
                 )
-                with autocast(device_type='cuda'):
+                with autocast(device_type="cuda"):
                     outputs = model(tokens, lengths, masks, start_pos)
                     loss = criterion(outputs, torch.argmax(labels, dim=1))
                 val_loss += loss.item()
@@ -513,12 +543,28 @@ if __name__ == "__main__":
 
         avg_val_loss = val_loss / len(val_dataloader)
         val_accuracy = accuracy_score(all_labels, all_preds, normalize=True)
+        validation_losses.append(avg_val_loss)
+        validation_accuracies.append(val_accuracy)
         logger.info(
             f"Epoch [{epoch+1}/{num_epochs}], Validation Loss: {avg_val_loss:.4f}, Validation Accuracy: {val_accuracy:.4f}"
         )
+
+        # Save the best model
+        if avg_val_loss < best_val_loss:
+            best_val_loss = avg_val_loss
+            torch.save(model.state_dict(), best_model_path)
+            logger.info(f"Best model saved with validation loss: {best_val_loss:.4f}")
 
         # Step the scheduler
         # scheduler.step()
 
     # Save the trained model
     torch.save(model.state_dict(), "transformer_model.pth")
+
+    # Save the logging information
+    log_data = {
+        "training_losses": training_losses,
+        "validation_losses": validation_losses,
+        "validation_accuracies": validation_accuracies,
+    }
+    torch.save(log_data, "training_log.pth")
