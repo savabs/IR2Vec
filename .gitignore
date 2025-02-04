@@ -21,3 +21,4 @@ tryouts/Classifier_poj104/Seq2Seq_transformer/output2.log
 tryouts/Classifier_poj104/Seq2Seq_transformer/transformer_model.pth
 tryouts/Classifier_poj104/Seq2Seq_transformer/training_log.pth
 tryouts/Classifier_poj104/Seq2Seq_transformer/best_transformer_model.pth
+tryouts/Classifier_poj104/training_lst_tran/best_model.pth
