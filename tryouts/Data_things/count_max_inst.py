@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # Set the dataset directory
-data_dir = '/home/es21btech11028/IR2Vec/tryouts/Data_things/processed_instruction_embeddings'
+data_dir = '/home/es21btech11028/IR2Vec/tryouts/Data_things/instruction_embeddings'
 
 # Initialize a list to store lengths
 lengths = []
@@ -35,7 +35,7 @@ min_length = lengths.min()
 mean_length = lengths.mean()
 median_length = np.median(lengths)
 std_dev = lengths.std()
-percentiles = np.percentile(lengths, [75, 90, 99])  # 25th, 50th (median), and 75th percentiles
+percentiles = np.percentile(lengths, [10, 20, 30])  # 25th, 50th (median), and 75th percentiles
 
 # Print statistics
 print(f"Number of programs: {len(lengths)}")

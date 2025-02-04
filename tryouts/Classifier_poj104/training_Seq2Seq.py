@@ -19,7 +19,6 @@ from torch import autocast
 import os
 torch._dynamo.config.verbose = True
 
-
 @dataclass
 class ModelArgs:
     dim: int = 4096
@@ -460,7 +459,8 @@ if __name__ == "__main__":
 
     # Define loss function and optimizer
     criterion = nn.CrossEntropyLoss()
-    optimizer = AdamW(model.parameters(), lr=1e-6)
+    weight_decay = 0.001
+    optimizer = AdamW(model.parameters(), lr=1e-6 , weight_decay=weight_decay)
     # scheduler = CosineAnnealingLR(optimizer, T_max=10)
 
     # Check if a saved model exists and load it
