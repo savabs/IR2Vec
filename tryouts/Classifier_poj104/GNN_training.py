@@ -7,6 +7,7 @@ from tqdm import tqdm
 from torch_geometric.nn import GCNConv, global_mean_pool
 from torch_geometric.loader import DataLoader
 from torch_geometric.data import InMemoryDataset, Data
+from torch.nn.utils.rnn import pad_sequence, pack_padded_sequence
 import os
 import torch
 import torch.nn as nn
@@ -18,10 +19,10 @@ from torch_geometric.data import InMemoryDataset, Data
 
 
 # Define parameters (these could be loaded from arguments or a config file)
-LEARNING_RATE = 0.00005
+LEARNING_RATE = 0.0001
 HIDDEN_DIM = 1024
-NUM_EPOCHS = 120
-MODEL_TYPE = "EnchancedGTAT"  # could also be "DeepGNN", etc.
+NUM_EPOCHS = 40
+MODEL_TYPE = "EnchancedGTAT_LSTM"  # could also be "DeepGNN", etc.
 ITERATION = 1
 
 
@@ -51,16 +52,27 @@ class GraphDataset(InMemoryDataset):
 class DeepGNN(nn.Module):
     def __init__(self, input_dim, hidden_dim, num_classes):
         super(DeepGNN, self).__init__()
-        # Four GCN layers with dropout to make the network deeper
+        # GCN layers
         self.conv1 = GCNConv(input_dim, hidden_dim)
         self.conv2 = GCNConv(hidden_dim, hidden_dim)
         self.conv3 = GCNConv(hidden_dim, hidden_dim)
         self.conv4 = GCNConv(hidden_dim, hidden_dim)
+        # Dropout
         self.dropout = nn.Dropout(p=0.5)
+        # LSTM layer: input_size matches GNN output (hidden_dim)
+        self.lstm = nn.LSTM(
+            input_size=hidden_dim,
+            hidden_size=hidden_dim,
+            num_layers=1,
+            batch_first=True
+        )
+        # Linear layer for classification
         self.lin = nn.Linear(hidden_dim, num_classes)
     
     def forward(self, data):
         x, edge_index, batch = data.x, data.edge_index, data.batch
+        
+        # Pass through GCN layers
         x = self.conv1(x, edge_index)
         x = F.relu(x)
         x = self.conv2(x, edge_index)
@@ -70,9 +82,34 @@ class DeepGNN(nn.Module):
         x = self.conv4(x, edge_index)
         x = F.relu(x)
         x = self.dropout(x)
-        x = global_mean_pool(x, batch)
-        x = self.lin(x)
-        return x
+        
+        # Split node representations into sequences per graph
+        num_graphs = batch.max().item() + 1
+        sequences = [x[batch == i] for i in range(num_graphs)]  # List of tensors, each [num_nodes_i, hidden_dim]
+        
+        # Get sequence lengths
+        lengths = [seq.size(0) for seq in sequences]
+        
+        # Pad sequences to the maximum length in the batch
+        padded_sequences = pad_sequence(sequences, batch_first=True)  # [num_graphs, max_len, hidden_dim]
+        
+        # Pack padded sequences for LSTM
+        packed_sequences = pack_padded_sequence(
+            padded_sequences,
+            lengths,
+            batch_first=True,
+            enforce_sorted=False
+        )
+        
+        # Process through LSTM
+        _, (hn, _) = self.lstm(packed_sequences)  # hn: [num_layers, num_graphs, hidden_dim]
+        
+        # Use the last hidden state as graph representation
+        graph_repr = hn[0]  # [num_graphs, hidden_dim], num_layers=1
+        
+        # Classification
+        out = self.lin(graph_repr)  # [num_graphs, num_classes]
+        return out
 
 # ------------------------------
 # SOTA: GTAT Layer with Cross Attention
@@ -137,7 +174,7 @@ class EnhancedGTATLayer(nn.Module):
 
         # Topology-based representation
         # topo_feat = F.relu(self.norm_topo(self.lin_topo(x, edge_index)))
-        topo_feat = F.relu(self.norm_topo(self.lin_topo(x, edge_index)))
+        topo_feat = F.relu(self.norm_topo(self.lin_topo(x)))
 
         # Multi-head attention fusion
         combined_feats = []
@@ -161,33 +198,64 @@ class EnhancedGTATLayer(nn.Module):
 class EnhancedDeepGTAT(nn.Module):
     def __init__(self, input_dim, hidden_dim, num_classes):
         super(EnhancedDeepGTAT, self).__init__()
-        
-        # Four Enhanced GTAT layers with residuals and normalization
+        # Enhanced GTAT layers
         self.layer1 = EnhancedGTATLayer(input_dim, hidden_dim)
         self.layer2 = EnhancedGTATLayer(hidden_dim, hidden_dim)
         self.layer3 = EnhancedGTATLayer(hidden_dim, hidden_dim)
         self.layer4 = EnhancedGTATLayer(hidden_dim, hidden_dim)
-
-        # Dropout for regularization
-        self.dropout = nn.Dropout(p=0.5)
-
-        # Final classification layer
+        self.layer5 = EnhancedGTATLayer(hidden_dim, hidden_dim)
+        self.layer6 = EnhancedGTATLayer(hidden_dim, hidden_dim)
+        # Dropout
+        self.dropout = nn.Dropout(p=0.4)
+        # LSTM layer
+        self.lstm = nn.LSTM(
+            input_size=hidden_dim,
+            hidden_size=hidden_dim,
+            num_layers=1,
+            batch_first=True
+        )
+        # Linear layer
         self.lin = nn.Linear(hidden_dim, num_classes)
-
+    
     def forward(self, data):
         x, edge_index, batch = data.x, data.edge_index, data.batch
-
+        
+        # Pass through GTAT layers
         x = self.layer1(x, edge_index)
         x = self.layer2(x, edge_index)
         x = self.layer3(x, edge_index)
         x = self.layer4(x, edge_index)
-
-        x = self.dropout(x)  # Apply dropout before pooling
-
-        # Global mean pooling to get graph-level representation
-        x = global_mean_pool(x, batch)
-
-        return self.lin(x)
+        x = self.layer5(x, edge_index)
+        x = self.layer6(x, edge_index)
+        x = self.dropout(x)
+        
+        # Split node representations into sequences per graph
+        num_graphs = batch.max().item() + 1
+        sequences = [x[batch == i] for i in range(num_graphs)]  # List of tensors
+        
+        # Get sequence lengths
+        lengths = [seq.size(0) for seq in sequences]
+        
+        # Pad sequences
+        padded_sequences = pad_sequence(sequences, batch_first=True)  # [num_graphs, max_len, hidden_dim]
+        
+        # Pack sequences
+        packed_sequences = pack_padded_sequence(
+            padded_sequences,
+            lengths,
+            batch_first=True,
+            enforce_sorted=False
+        )
+        
+        # Process through LSTM
+        _, (hn, _) = self.lstm(packed_sequences)  # hn: [1, num_graphs, hidden_dim]
+        
+        # Graph representation from last hidden state
+        graph_repr = hn[0]  # [num_graphs, hidden_dim]
+        
+        # Classification
+        out = self.lin(graph_repr)  # [num_graphs, num_classes]
+        return out
 
 
 # ------------------------------
@@ -240,7 +308,7 @@ if __name__ == "__main__":
     criterion = nn.CrossEntropyLoss()
     
     # Create dynamic checkpoint filenames using f-strings
-    checkpoint_path = f"checkpoint_{MODEL_TYPE}_ITERATION_{ITERATION}_HIDDEN_{HIDDEN_DIM}.pth"
+    checkpoint_path = f"checkpoint_{MODEL_TYPE}_ITERATION_{ITERATION}_HIDDEN_{HIDDEN_DIM}_LSTM.pth"
     best_model_path = f"best_model_{MODEL_TYPE}_ITERATION_{ITERATION}_HIDDEN_{HIDDEN_DIM}.pth"
 
     print("Checkpoint will be saved at:", checkpoint_path)
