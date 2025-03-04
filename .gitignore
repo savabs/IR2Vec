@@ -25,3 +25,6 @@ tryouts/Classifier_poj104/training_lst_tran/best_model.pth
 tryouts/Classifier_poj104/Enhanced*
 tryouts/Classifier_poj104/checkpoint*
 tryouts/Classifier_poj104/best_model*
+tryouts/Data_things/graph_dataset/*
+tryouts/Data_things/GraphOutputs/*
+tryouts/Classifier_poj104/IR2Vec/*
