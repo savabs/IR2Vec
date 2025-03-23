@@ -29,3 +29,5 @@ tryouts/Data_things/graph_dataset/*
 tryouts/Classifier_poj104/graph_dataset/*
 tryouts/Data_things/GraphOutputs/*
 tryouts/Classifier_poj104/IR2Vec/*
+tryouts/Data_things/processed_graph_data.pt
+tryouts/Classifier_poj104/GNN/best_model*
