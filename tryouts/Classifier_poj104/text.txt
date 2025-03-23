@@ -1,0 +1,4 @@
+Loaded 41678 graphs!
+Using SOTA DeepGTAT model with cross attention.
+Checkpoint will be saved at: checkpoint_EnchancedGTAT_GAT_LSTM2_ITERATION_1_HIDDEN_2048_LSTM.pth
+Loaded 41678 graphs!
