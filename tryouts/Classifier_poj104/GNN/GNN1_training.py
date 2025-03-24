@@ -45,9 +45,9 @@ class AdvancedGAT_LSTM(nn.Module):
         self.lstm = nn.LSTM(out_features, lstm_hidden, batch_first=True, bidirectional=True)
 
         # Fully connected classification layers
-        # self.fc1 = nn.Linear(out_features, 512)  # for the non lstm one 
+        self.fc1 = nn.Linear(out_features, 512)  # for the non lstm one 
 
-        self.fc1 = nn.Linear(lstm_hidden*2 , 512) # *2 for bidirectional
+        # self.fc1 = nn.Linear(lstm_hidden*2 , 512) # *2 for bidirectional
         self.fc2 = nn.Linear(512, num_classes)
 
         self.dropout = nn.Dropout(dropout)
@@ -76,27 +76,30 @@ class AdvancedGAT_LSTM(nn.Module):
         x4 = self.norm4(x4)
         x4 = self.dropout(x4)
 
+        x_gp = global_mean_pool(x4, batch=batch)
 
-        # 🟢 Convert node embeddings to variable-length sequences per graph
-        node_embeddings = []
-        graph_lengths = []
-        for i in range(batch_size):
-            node_indices = (batch == i).nonzero(as_tuple=True)[0]  # Get node indices for each graph
-            node_embeddings.append(x4[node_indices])
-            graph_lengths.append(len(node_indices))
+        # # 🟢 Convert node embeddings to variable-length sequences per graph
+        # node_embeddings = []
+        # graph_lengths = []
+        # for i in range(batch_size):
+        #     node_indices = (batch == i).nonzero(as_tuple=True)[0]  # Get node indices for each graph
+        #     node_embeddings.append(x4[node_indices])
+        #     graph_lengths.append(len(node_indices))
 
-        # 🟢 Pad sequences to the longest graph in the batch
-        x_padded = nn.utils.rnn.pad_sequence(node_embeddings, batch_first=True, padding_value=0)
+        # # 🟢 Pad sequences to the longest graph in the batch
+        # x_padded = nn.utils.rnn.pad_sequence(node_embeddings, batch_first=True, padding_value=0)
 
-        # 🟢 Pack sequence to handle variable lengths
-        x_packed = pack_padded_sequence(x_padded, graph_lengths, batch_first=True, enforce_sorted=False)
+        # # 🟢 Pack sequence to handle variable lengths
+        # x_packed = pack_padded_sequence(x_padded, graph_lengths, batch_first=True, enforce_sorted=False)
 
-        # 🟢 LSTM Layer
-        _, (h_n, _) = self.lstm(x_packed)  # Get final hidden state
-        h_n = torch.cat((h_n[0], h_n[1]), dim=-1)  # Concatenate bidirectional outputs
+        # # 🟢 LSTM Layer
+        # _, (h_n, _) = self.lstm(x_packed)  # Get final hidden state
+        # h_n = torch.cat((h_n[0], h_n[1]), dim=-1)  # Concatenate bidirectional outputs
+
+        
 
         # 🟢 Fully Connected Layers
-        x = self.dropout(F.relu(self.fc1(h_n)))
+        x = self.dropout(F.relu(self.fc1(x_gp)))
         x = self.fc2(x)
 
         return x
@@ -109,9 +112,6 @@ def init_weights(m):
     elif isinstance(m, GATConv):
         nn.init.xavier_uniform_(m.lin.weight)
         
-
-
-
 
 # Device setup
 # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
