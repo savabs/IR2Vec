@@ -147,8 +147,8 @@ test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False)  # No shuff
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model = AdvancedGAT_LSTM().to(device)
 model.apply(init_weights)
-optimizer = torch.optim.AdamW(model.parameters(), lr=0.005, weight_decay=1e-4)
-scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.5)
+# optimizer = torch.optim.AdamW(model.parameters(), lr=0.005, weight_decay=1e-4)
+# scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.5)
 # optimizer = torch.optim.Adam(model.parameters(), lr=1e-4, weight_decay=1e-5)
 optimizer = torch.optim.Adam(model.parameters(), lr=0.0005)
 scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=5)
@@ -201,7 +201,7 @@ for epoch in range(50):  # Train for more epochs
     train_loss, train_acc = train(epoch)
     test_acc = evaluate()
     model_save_path = f"best_model_{test_acc}.pth"
-    # scheduler.step()  # Adjust learning rate
+    scheduler.step(test_acc)
     # Save best model
     # global best_test_acc
     if test_acc > best_test_acc:
