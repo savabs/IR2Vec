@@ -16,6 +16,10 @@ import torch.nn.functional as F
 from torch_geometric.nn import GATConv
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch_geometric.nn import GAT, global_mean_pool
 import sys
 from datetime import datetime
 
@@ -25,29 +29,20 @@ sys.stdout = open(log_filename, "w")
 sys.stderr = sys.stdout  # Redirect errors to the same log file
 
 print(f"Logging to {log_filename}")
+
+
 class AdvancedGAT_LSTM(nn.Module):
-    def __init__(self, in_features=300, hidden_features=256, out_features=1024, n_heads=8, num_classes=104, lstm_hidden=1024, dropout=0.3):
+    def __init__(self, in_features=300, hidden_features=256, out_features=1024, n_heads=8, num_classes=104, lstm_hidden=1024, dropout=0.3, num_layers=4): # num_layers = 1 now
         super(AdvancedGAT_LSTM, self).__init__()
 
-        self.gat1 = GATConv(in_features, hidden_features, heads=n_heads, dropout=dropout, concat=True)
-        self.norm1 = nn.LayerNorm(hidden_features * n_heads)
-
-        self.gat2 = GATConv(hidden_features * n_heads, hidden_features, heads=n_heads, dropout=dropout, concat=True)
-        self.norm2 = nn.LayerNorm(hidden_features * n_heads)
-
-        self.gat3 = GATConv(hidden_features * n_heads, hidden_features, heads=n_heads, dropout=dropout, concat=True)
-        self.norm3 = nn.LayerNorm(hidden_features * n_heads)
-
-        self.gat4 = GATConv(hidden_features * n_heads, out_features, heads=n_heads, dropout=dropout, concat=False)
-        self.norm4 = nn.LayerNorm(out_features)
+        self.gat = GAT(in_features, out_features, heads=n_heads, dropout=dropout, num_layers=num_layers, concat=True)
+        self.norm = nn.LayerNorm(out_features )
 
         # 🟢 LSTM Layer for Graph Representations
-        self.lstm = nn.LSTM(out_features, lstm_hidden, batch_first=True, bidirectional=True)
+        self.lstm = nn.LSTM(out_features * n_heads, lstm_hidden, batch_first=True, bidirectional=True)
 
         # Fully connected classification layers
-        self.fc1 = nn.Linear(out_features, 512)  # for the non lstm one 
-
-        # self.fc1 = nn.Linear(lstm_hidden*2 , 512) # *2 for bidirectional
+        self.fc1 = nn.Linear(out_features, 512)  # Adjusted input dimension
         self.fc2 = nn.Linear(512, num_classes)
 
         self.dropout = nn.Dropout(dropout)
@@ -56,61 +51,29 @@ class AdvancedGAT_LSTM(nn.Module):
         x, edge_index, batch = data.x, data.edge_index, data.batch
         batch_size = batch.max().item() + 1
 
-        # 🟢 GAT Layers
-        x1 = F.elu(self.gat1(x, edge_index))
-        x1 = self.norm1(x1)
-        x1 = self.dropout(x1)
+        # 🟢 Single GAT Layer with Multiple Message Passing Steps
+        x = self.gat(x, edge_index)
 
-        x2 = F.elu(self.gat2(x1, edge_index))
-        x2 = self.norm2(x2)
-        x2 = self.dropout(x2)
-        x2 = x1 + x2  # Residual Connection
+        x = self.norm(x)
+        x = self.dropout(x)
 
-        x3 = F.elu(self.gat3(x2, edge_index))
-        x3 = self.norm3(x3)
-        x3 = self.dropout(x3)
-
-        x3 = x3 + x2
-
-        x4 = F.elu(self.gat4(x3, edge_index))
-        x4 = self.norm4(x4)
-        x4 = self.dropout(x4)
-
-        x_gp = global_mean_pool(x4, batch=batch)
-
-        # # 🟢 Convert node embeddings to variable-length sequences per graph
-        # node_embeddings = []
-        # graph_lengths = []
-        # for i in range(batch_size):
-        #     node_indices = (batch == i).nonzero(as_tuple=True)[0]  # Get node indices for each graph
-        #     node_embeddings.append(x4[node_indices])
-        #     graph_lengths.append(len(node_indices))
-
-        # # 🟢 Pad sequences to the longest graph in the batch
-        # x_padded = nn.utils.rnn.pad_sequence(node_embeddings, batch_first=True, padding_value=0)
-
-        # # 🟢 Pack sequence to handle variable lengths
-        # x_packed = pack_padded_sequence(x_padded, graph_lengths, batch_first=True, enforce_sorted=False)
-
-        # # 🟢 LSTM Layer
-        # _, (h_n, _) = self.lstm(x_packed)  # Get final hidden state
-        # h_n = torch.cat((h_n[0], h_n[1]), dim=-1)  # Concatenate bidirectional outputs
-
-        
+        x_gp = global_mean_pool(x, batch=batch)
 
         # 🟢 Fully Connected Layers
         x = self.dropout(F.relu(self.fc1(x_gp)))
         x = self.fc2(x)
 
         return x
-    
+
 def init_weights(m):
     if isinstance(m, nn.Linear):
         nn.init.xavier_uniform_(m.weight)
         if m.bias is not None:
             nn.init.zeros_(m.bias)
-    elif isinstance(m, GATConv):
-        nn.init.xavier_uniform_(m.lin.weight)
+    elif isinstance(m, GAT):
+        for gat_layer in m.convs: #convs is a list of gatconv layers.
+            nn.init.xavier_uniform_(gat_layer.lin.weight)
+            # nn.init.xavier_uniform_(gat_layer.lin_r.weight)
         
 
 # Device setup
@@ -211,3 +174,6 @@ for epoch in range(50):  # Train for more epochs
 
     print(f"🔥 Epoch {epoch+1}: Loss = {train_loss:.4f}, Train Acc = {train_acc:.4f}, Test Acc = {test_acc:.4f}")
     print(f"🔥 Epoch {epoch+1}: Loss = {train_loss:.4f}, Train Acc = {train_acc:.4f}, Test Acc = {test_acc:.4f}")
+
+
+    
